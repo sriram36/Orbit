@@ -76,9 +76,15 @@ class _ChecklistScreenState extends State<ChecklistScreen>
       if (lastResetStr == null) {
         shouldReset = true;
       } else {
-        final lastReset = DateTime.parse(lastResetStr);
-        if (lastReset.isBefore(todayResetTime)) {
+        try {
+          final lastReset = DateTime.parse(lastResetStr);
+          if (lastReset.isBefore(todayResetTime)) {
+            shouldReset = true;
+          }
+        } catch (e) {
+          debugPrint('Error parsing last reset date: $e');
           shouldReset = true;
+          await prefs.remove('last_reset_${widget.noteId}');
         }
       }
 
@@ -109,12 +115,16 @@ class _ChecklistScreenState extends State<ChecklistScreen>
     final prefs = await SharedPreferences.getInstance();
     final String? notesString = prefs.getString('notes');
     if (notesString != null) {
-      List<dynamic> allNotes = jsonDecode(notesString);
-      final index = allNotes.indexWhere((n) => n['id'] == widget.noteId);
-      if (index != -1) {
+      try {
+        List<dynamic> allNotes = jsonDecode(notesString);
+        final index = allNotes.indexWhere((n) => n['id'] == widget.noteId);
+        if (index != -1) {
         allNotes[index]['title'] = _title;
-        allNotes[index]['checklistItems'] = _items;
+        allNotes[index]['items'] = _items;
         await prefs.setString('notes', jsonEncode(allNotes));
+      }
+      } catch (e) {
+        debugPrint('Error saving checklist data: $e');
       }
     }
     if (mounted) {
@@ -133,7 +143,7 @@ class _ChecklistScreenState extends State<ChecklistScreen>
     HapticFeedback.selectionClick();
     setState(() {
       _items.add({
-        'id': DateTime.now().millisecondsSinceEpoch,
+        'id': DateTime.now().microsecondsSinceEpoch,
         'text': '',
         'checked': false,
         'isImportant': false,
@@ -149,7 +159,7 @@ class _ChecklistScreenState extends State<ChecklistScreen>
         parentItem['subtasks'] = [];
       }
       (parentItem['subtasks'] as List).add({
-        'id': DateTime.now().millisecondsSinceEpoch,
+        'id': DateTime.now().microsecondsSinceEpoch,
         'text': 'New Step',
         'checked': false,
       });
@@ -190,7 +200,7 @@ class _ChecklistScreenState extends State<ChecklistScreen>
               '${picked.hour}:${picked.minute.toString().padLeft(2, '0')}';
         });
         NotificationService()
-            .scheduleDailyNotification(item['id'], item['text'], picked);
+            .scheduleDailyNotification(item['id'], item['text'] ?? 'Task', picked);
       }
     }
     _saveData();
@@ -218,7 +228,22 @@ class _ChecklistScreenState extends State<ChecklistScreen>
             });
             _saveData();
             if (item['notifyTime'] != null) {
-              // Re-schedule notification logic would go here, simplified for now
+              try {
+                final timeString = item['notifyTime'] as String;
+                final parts = timeString.split(':');
+                if (parts.length == 2) {
+                  final hour = int.parse(parts[0]);
+                  final minute = int.parse(parts[1]);
+                  final time = TimeOfDay(hour: hour, minute: minute);
+                  NotificationService().scheduleDailyNotification(
+                    item['id'],
+                    item['text'] ?? 'Task',
+                    time,
+                  );
+                }
+              } catch (e) {
+                debugPrint('Error rescheduling notification: $e');
+              }
             }
           },
         ),
@@ -273,9 +298,11 @@ class _ChecklistScreenState extends State<ChecklistScreen>
     final children = _items.asMap().entries.map((entry) {
       final index = entry.key;
       final item = entry.value;
-      return Dismissible(
-        key: Key(item['id'].toString()),
-        direction: DismissDirection.endToStart,
+      return KeyedSubtree(
+        key: ValueKey(item['id']),
+        child: Dismissible(
+          key: Key('dismissible_${item['id']}'), // More distinct key
+          direction: DismissDirection.endToStart,
         background: Container(
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.only(right: 20),
@@ -317,7 +344,9 @@ class _ChecklistScreenState extends State<ChecklistScreen>
             setState(() {
               item['checked'] = val;
             });
-            _saveData();
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _saveData();
+            });
           },
           onTextChanged: (val) {
             item['text'] = val;
@@ -329,23 +358,35 @@ class _ChecklistScreenState extends State<ChecklistScreen>
           onAddSubtask: () => _addSubtask(item),
           onSubtaskChecked: (subIndex, val) {
             setState(() {
-              (item['subtasks'] as List)[subIndex]['checked'] = val;
+              final subtasks = item['subtasks'];
+              if (subtasks != null && subtasks is List && subIndex < subtasks.length) {
+                subtasks[subIndex]['checked'] = val;
+              }
             });
-            _saveData();
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _saveData();
+            });
           },
           onSubtaskTextChanged: (subIndex, val) {
-            (item['subtasks'] as List)[subIndex]['text'] = val;
+            final subtasks = item['subtasks'];
+            if (subtasks != null && subtasks is List && subIndex < subtasks.length) {
+              subtasks[subIndex]['text'] = val;
+            }
             _saveData();
           },
           onSubtaskDelete: (subIndex) {
             setState(() {
-              (item['subtasks'] as List).removeAt(subIndex);
+              final subtasks = item['subtasks'];
+              if (subtasks != null && subtasks is List && subIndex < subtasks.length) {
+                subtasks.removeAt(subIndex);
+              }
             });
             _saveData();
           },
           onFocusChange: (hasFocus) {
             // No-op: Focus change no longer affects reordering
           },
+        ),
         ),
       );
     }).toList();

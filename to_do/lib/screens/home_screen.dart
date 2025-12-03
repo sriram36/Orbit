@@ -67,16 +67,24 @@ class _HomeScreenState extends State<HomeScreen> {
     final String? lastCompletionStr = prefs.getString('last_completion_date');
 
     if (lastCompletionStr != null) {
-      final lastCompletion = DateTime.parse(lastCompletionStr);
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final yesterday = today.subtract(const Duration(days: 1));
+      try {
+        final lastCompletionRaw = DateTime.parse(lastCompletionStr);
+        // Normalize to midnight for fair comparison
+        final lastCompletion = DateTime(lastCompletionRaw.year, lastCompletionRaw.month, lastCompletionRaw.day);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final yesterday = today.subtract(const Duration(days: 1));
 
-      if (lastCompletion.isBefore(yesterday)) {
+        if (lastCompletion.isBefore(yesterday)) {
         setState(() => _streak = 0);
         await prefs.setInt('streak', 0);
       } else {
         setState(() => _streak = streak);
+        }
+      } catch (e) {
+        debugPrint('Error parsing last completion date: $e');
+        setState(() => _streak = 0);
+        await prefs.remove('last_completion_date');
       }
     } else {
       setState(() => _streak = 0);
@@ -90,9 +98,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final today = DateTime(now.year, now.month, now.day);
 
     if (lastCompletionStr != null) {
-      final lastCompletion = DateTime.parse(lastCompletionStr);
-      if (lastCompletion.isAtSameMomentAs(today)) {
-        return;
+      try {
+        final lastCompletionRaw = DateTime.parse(lastCompletionStr);
+        final lastCompletion = DateTime(lastCompletionRaw.year, lastCompletionRaw.month, lastCompletionRaw.day);
+        if (lastCompletion.isAtSameMomentAs(today)) {
+          return;
+        }
+      } catch (e) {
+        debugPrint('Error parsing last completion date in update: $e');
       }
     }
 
@@ -125,8 +138,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
         bool anyCompleted = false;
         for (var note in _notes) {
-          final items = note['items'] as List;
-          if (items.isNotEmpty) {
+          final items = note['items'];
+          if (items != null && items is List && items.isNotEmpty) {
             final progress = _calculateProgress(items);
             if (progress == 1.0) {
               anyCompleted = true;
@@ -147,7 +160,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _addNote() async {
     setState(() {
       _notes.add({
-        'id': DateTime.now().millisecondsSinceEpoch,
+        'id': DateTime.now().microsecondsSinceEpoch,
         'title': 'New Routine',
         'items': [],
         'color': Colors.blue.toARGB32(),
@@ -214,9 +227,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      for (var item in note['items']) {
-        if (item['notifyTime'] != null) {
-          NotificationService().cancelNotification(item['id']);
+      final items = note['items'];
+      if (items != null && items is List) {
+        for (var item in items) {
+          if (item['notifyTime'] != null) {
+            NotificationService().cancelNotification(item['id']);
+          }
         }
       }
     }
@@ -577,7 +593,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // KeyedSubtree allows the ReorderableBuilder to track widgets correctly
     final children = List.generate(filteredNotes.length, (index) {
       final note = filteredNotes[index];
-      final progress = _calculateProgress(note['items'] as List);
+      final items = note['items'];
+      final progress = (items != null && items is List) ? _calculateProgress(items) : 0.0;
       final percent = (progress * 100).toInt();
 
       return KeyedSubtree(
@@ -712,26 +729,61 @@ class _HomeScreenState extends State<HomeScreen> {
         onReorder: (reorderedListFunction) {
           try {
             setState(() {
+              // Apply reordering to filteredNotes
               final reorderedResult =
                   (reorderedListFunction as dynamic)(filteredNotes);
               final reorderedVisibleNotes =
                   List<Map<String, dynamic>>.from(reorderedResult);
 
               if (_selectedCategory == 'All') {
+                // Simple case: just replace the entire list
                 _notes = reorderedVisibleNotes;
               } else {
-                List<Map<String, dynamic>> newNotes = [];
-                int visibleIndex = 0;
-                for (var note in _notes) {
-                  if ((note['category'] ?? 'All') == _selectedCategory) {
-                    if (visibleIndex < reorderedVisibleNotes.length) {
-                      newNotes.add(reorderedVisibleNotes[visibleIndex]);
-                      visibleIndex++;
-                    }
-                  } else {
-                    newNotes.add(note);
+                // Complex case: maintain the order of visible notes while preserving other notes
+                // Build a map for quick lookup of new positions
+                Map<int, int> idToNewIndex = {};
+                for (int i = 0; i < reorderedVisibleNotes.length; i++) {
+                  idToNewIndex[reorderedVisibleNotes[i]['id']] = i;
+                }
+                
+                // Separate notes into current category and others
+                List<Map<String, dynamic>> otherNotes = [];
+                List<int> otherIndices = [];
+                
+                for (int i = 0; i < _notes.length; i++) {
+                  if ((_notes[i]['category'] ?? 'All') != _selectedCategory) {
+                    otherNotes.add(_notes[i]);
+                    otherIndices.add(i);
                   }
                 }
+                
+                // Rebuild the list
+                List<Map<String, dynamic>> newNotes = [];
+                int visibleIndex = 0;
+                int otherIndex = 0;
+                
+                for (int i = 0; i < _notes.length; i++) {
+                  // Check if we should insert from other notes at this position
+                  if (otherIndex < otherIndices.length && otherIndices[otherIndex] == i) {
+                    newNotes.add(otherNotes[otherIndex]);
+                    otherIndex++;
+                  } else if (visibleIndex < reorderedVisibleNotes.length) {
+                    // Insert from reordered visible notes
+                    newNotes.add(reorderedVisibleNotes[visibleIndex]);
+                    visibleIndex++;
+                  }
+                }
+                
+                // Add any remaining items
+                while (visibleIndex < reorderedVisibleNotes.length) {
+                  newNotes.add(reorderedVisibleNotes[visibleIndex]);
+                  visibleIndex++;
+                }
+                while (otherIndex < otherNotes.length) {
+                  newNotes.add(otherNotes[otherIndex]);
+                  otherIndex++;
+                }
+                
                 _notes = newNotes;
               }
             });
@@ -1002,7 +1054,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         Text(
-                          '${(note['items'] as List).where((i) => i['checked'] == true).length}/${(note['items'] as List).length}',
+                          () {
+                            final items = note['items'];
+                            if (items == null || items is! List) return '0/0';
+                            final checked = items.where((i) => i['checked'] == true).length;
+                            return '$checked/${items.length}';
+                          }(),
                           style: GoogleFonts.outfit(
                             fontWeight: FontWeight.w500,
                             fontSize: 14,
@@ -1037,7 +1094,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // List Mode: Return Dismissible directly (no extra padding wrapping it)
     return Dismissible(
-      key: ValueKey(note['id']),
+      key: Key('dismissible_${note['id']}'), // Different key from parent KeyedSubtree
       background: Container(
         margin: const EdgeInsets.symmetric(
             vertical: 2), // Tiny vertical margin for visual polish
@@ -1133,7 +1190,8 @@ class RoutineSearchDelegate extends SearchDelegate {
     final results = notes.where((note) {
       final titleMatch =
           note['title'].toString().toLowerCase().contains(query.toLowerCase());
-      final itemMatch = (note['items'] as List).any((item) =>
+      final items = note['items'];
+      final itemMatch = items != null && items is List && items.any((item) =>
           item['text'].toString().toLowerCase().contains(query.toLowerCase()));
       return titleMatch || itemMatch;
     }).toList();
@@ -1142,9 +1200,11 @@ class RoutineSearchDelegate extends SearchDelegate {
       itemCount: results.length,
       itemBuilder: (context, index) {
         final note = results[index];
+        final items = note['items'];
+        final taskCount = (items != null && items is List) ? items.length : 0;
         return ListTile(
           title: Text(note['title']),
-          subtitle: Text("${(note['items'] as List).length} tasks"),
+          subtitle: Text("$taskCount tasks"),
           onTap: () {
             close(context, null);
             onNoteTap(note);

@@ -73,7 +73,7 @@ class _SplashScreenState extends State<SplashScreen> {
               style: GoogleFonts.outfit(
                 fontSize: 42,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF00FFFF),
+                color: const Color(0xFF00FFFF),
                 letterSpacing: 1.2,
               ),
             ).animate().fadeIn(delay: 800.ms, duration: 600.ms).slideY(
@@ -84,7 +84,7 @@ class _SplashScreenState extends State<SplashScreen> {
               'Stay on track, every day',
               style: GoogleFonts.outfit(
                 fontSize: 16,
-                color: Color(0xFF00FFFF), // Cyan text
+                color: const Color(0xFF00FFFF), // Cyan text
               ),
             ).animate().fadeIn(delay: 800.ms, duration: 600.ms),
           ],

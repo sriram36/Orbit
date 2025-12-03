@@ -27,11 +27,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final prefs = await SharedPreferences.getInstance();
     final String? historyString = prefs.getString('history_log');
     if (historyString != null) {
-      final Map<String, dynamic> decoded = jsonDecode(historyString);
-      setState(() {
-        _history = decoded
-            .map((key, value) => MapEntry(DateTime.parse(key), value as int));
-      });
+      try {
+        final Map<String, dynamic> decoded = jsonDecode(historyString);
+        setState(() {
+          _history = decoded.map((key, value) {
+            try {
+              return MapEntry(DateTime.parse(key), value as int);
+            } catch (e) {
+              debugPrint('Error parsing history date $key: $e');
+              return MapEntry(DateTime.now(), 0);
+            }
+          });
+        });
+      } catch (e) {
+        debugPrint('Error loading history: $e');
+      }
     }
   }
 
@@ -125,7 +135,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     if (entry.value != -1) {
                       Color bgColor = Colors.transparent;
                       Color textColor =
-                          Theme.of(context).textTheme.bodyMedium!.color!;
+                          Theme.of(context).textTheme.bodyMedium?.color ?? Colors.black;
 
                       if (entry.value == 100) {
                         bgColor = Colors.green.withValues(alpha: 0.2);

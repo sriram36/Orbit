@@ -16,6 +16,13 @@ pluginManagement {
     }
 }
 
+// Fix for paths with spaces
+gradle.projectsLoaded {
+    rootProject.allprojects {
+        buildDir = new File(rootProject.buildDir, project.name)
+    }
+}
+
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
     id "com.android.application" version "8.3.0" apply false
