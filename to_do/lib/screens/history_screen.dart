@@ -29,10 +29,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (historyString != null) {
       try {
         final Map<String, dynamic> decoded = jsonDecode(historyString);
+        if (!mounted) return;
         setState(() {
           _history = decoded.map((key, value) {
             try {
-              return MapEntry(DateTime.parse(key), value as int);
+              return MapEntry(DateTime.parse(key), (value as num).toInt());
             } catch (e) {
               debugPrint('Error parsing history date $key: $e');
               return MapEntry(DateTime.now(), 0);

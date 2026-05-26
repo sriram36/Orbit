@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/services.dart';
 import '../services/notification_service.dart';
+import '../services/widget_service.dart';
 
 import 'package:flutter_reorderable_grid_view/widgets/widgets.dart';
 
@@ -94,11 +95,16 @@ class _ChecklistScreenState extends State<ChecklistScreen>
         setState(() {
           for (var item in _items) {
             item['checked'] = false;
+            if (item['subtasks'] != null) {
+              for (var sub in (item['subtasks'] as List)) {
+                sub['checked'] = false;
+              }
+            }
           }
         });
         await _saveData();
         if (!mounted) return;
-        prefs.setString('last_reset_${widget.noteId}', now.toIso8601String());
+        await prefs.setString('last_reset_${widget.noteId}', now.toIso8601String());
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -119,10 +125,10 @@ class _ChecklistScreenState extends State<ChecklistScreen>
         List<dynamic> allNotes = jsonDecode(notesString);
         final index = allNotes.indexWhere((n) => n['id'] == widget.noteId);
         if (index != -1) {
-        allNotes[index]['title'] = _title;
-        allNotes[index]['items'] = _items;
-        await prefs.setString('notes', jsonEncode(allNotes));
-      }
+          allNotes[index]['title'] = _title;
+          allNotes[index]['items'] = _items;
+          await prefs.setString('notes', jsonEncode(allNotes));
+        }
       } catch (e) {
         debugPrint('Error saving checklist data: $e');
       }
@@ -136,7 +142,40 @@ class _ChecklistScreenState extends State<ChecklistScreen>
     if (!mounted) return;
     if (_items.isNotEmpty && _items.every((item) => item['checked'] == true)) {
       _confettiController.play();
+      _updateStreakAndHistory();
     }
+  }
+
+  Future<void> _updateStreakAndHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? lastCompletionStr = prefs.getString('last_completion_date');
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    if (lastCompletionStr != null) {
+      try {
+        final lastRaw = DateTime.parse(lastCompletionStr);
+        final last = DateTime(lastRaw.year, lastRaw.month, lastRaw.day);
+        if (last.isAtSameMomentAs(today)) return;
+      } catch (_) {}
+    }
+
+    int streak = prefs.getInt('streak') ?? 0;
+    streak++;
+    HapticFeedback.lightImpact();
+    await prefs.setInt('streak', streak);
+    await prefs.setString('last_completion_date', today.toIso8601String());
+    await WidgetService.updateStreak(streak);
+
+    final String? historyString = prefs.getString('history_log');
+    Map<String, dynamic> history = {};
+    if (historyString != null) {
+      try {
+        history = jsonDecode(historyString);
+      } catch (_) {}
+    }
+    history[today.toIso8601String()] = 100;
+    await prefs.setString('history_log', jsonEncode(history));
   }
 
   void _addItem() {
@@ -301,42 +340,41 @@ class _ChecklistScreenState extends State<ChecklistScreen>
       return KeyedSubtree(
         key: ValueKey(item['id']),
         child: Dismissible(
-          key: Key('dismissible_${item['id']}'), // More distinct key
+          key: Key('dismissible_${item['id']}'),
           direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: 20),
-          decoration: BoxDecoration(
-            color: Colors.red.shade100,
-            borderRadius: BorderRadius.circular(12),
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            decoration: BoxDecoration(
+              color: Colors.red.shade100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.delete_outline, color: Colors.red.shade700),
           ),
-          child: Icon(Icons.delete_outline, color: Colors.red.shade700),
-        ),
-        confirmDismiss: (direction) async {
-          return await showDialog(
-            context: context,
-            builder: (BuildContext context) {
-              return AlertDialog(
-                title: const Text("Delete Task?"),
-                content:
-                    const Text("Are you sure you want to delete this task?"),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text("Cancel"),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text("Delete"),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-        onDismissed: (direction) => _deleteItem(index),
-        child: ChecklistItem(
+          confirmDismiss: (direction) async {
+            return await showDialog(
+              context: context,
+              builder: (BuildContext context) {
+                return AlertDialog(
+                  title: const Text("Delete Task?"),
+                  content: const Text("Are you sure you want to delete this task?"),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text("Cancel"),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
+                      child: const Text("Delete"),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+          onDismissed: (direction) => _deleteItem(index),
+          child: ChecklistItem(
           item: item,
           index: index,
           onChecked: (val) {
@@ -386,7 +424,7 @@ class _ChecklistScreenState extends State<ChecklistScreen>
           onFocusChange: (hasFocus) {
             // No-op: Focus change no longer affects reordering
           },
-        ),
+          ),
         ),
       );
     }).toList();
