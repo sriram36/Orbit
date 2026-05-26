@@ -30,7 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final int? hour = prefs.getInt('reset_hour');
     final int? minute = prefs.getInt('reset_minute');
-    if (hour != null && minute != null) {
+    if (hour != null && minute != null && mounted) {
       setState(() {
         _resetTime = TimeOfDay(hour: hour, minute: minute);
       });
@@ -41,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('reset_hour', time.hour);
     await prefs.setInt('reset_minute', time.minute);
+    if (!mounted) return;
     setState(() {
       _resetTime = time;
     });
