@@ -41,9 +41,11 @@ class NotificationService {
     }
   }
 
+  int _safeId(int id) => id & 0x7FFFFFFF;
+
   Future<void> scheduleDailyNotification(int id, String title, TimeOfDay time) async {
     await flutterLocalNotificationsPlugin.zonedSchedule(
-      id,
+      _safeId(id),
       'Time to: $title',
       'This is your daily reminder!',
       _nextInstanceOfTime(time),
@@ -64,7 +66,7 @@ class NotificationService {
   }
 
   Future<void> cancelNotification(int id) async {
-    await flutterLocalNotificationsPlugin.cancel(id);
+    await flutterLocalNotificationsPlugin.cancel(_safeId(id));
   }
 
   tz.TZDateTime _nextInstanceOfTime(TimeOfDay time) {

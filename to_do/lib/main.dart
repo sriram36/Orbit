@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/notification_service.dart';
 import 'screens/splash_screen.dart';
 
@@ -19,10 +20,30 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   ThemeMode _themeMode = ThemeMode.system;
 
-  void _toggleTheme(ThemeMode mode) {
-    setState(() {
-      _themeMode = mode;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final saved = prefs.getString('theme_mode');
+    if (saved != null) {
+      setState(() {
+        _themeMode = ThemeMode.values.firstWhere(
+          (e) => e.name == saved,
+          orElse: () => ThemeMode.system,
+        );
+      });
+    }
+  }
+
+  Future<void> _toggleTheme(ThemeMode mode) async {
+    setState(() => _themeMode = mode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('theme_mode', mode.name);
   }
 
   @override

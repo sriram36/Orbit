@@ -133,9 +133,6 @@ class _ChecklistScreenState extends State<ChecklistScreen>
         debugPrint('Error saving checklist data: $e');
       }
     }
-    if (mounted) {
-      _checkCompletion();
-    }
   }
 
   void _checkCompletion() {
@@ -382,8 +379,9 @@ class _ChecklistScreenState extends State<ChecklistScreen>
             setState(() {
               item['checked'] = val;
             });
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _saveData();
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              await _saveData();
+              if (mounted) _checkCompletion();
             });
           },
           onTextChanged: (val) {

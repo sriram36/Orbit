@@ -493,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   void _deleteCategory(String category) {
@@ -859,7 +859,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               SliverPadding(
                 padding: const EdgeInsets.all(16),
-                sliver: _notes.isEmpty
+                sliver: filteredNotes.isEmpty
                     ? SliverFillRemaining(
                         child: Center(
                           child: Column(
