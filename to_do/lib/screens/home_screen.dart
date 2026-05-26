@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/notification_service.dart';
-import '../services/widget_service.dart';
 import 'package:flutter/services.dart';
 import 'settings_screen.dart';
 import 'history_screen.dart';
@@ -45,12 +44,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadNotes();
     _loadCategories();
     _loadViewMode();
-    _checkStreak();
     NotificationService().requestPermissions();
   }
 
   Future<void> _loadViewMode() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _isGridMode = prefs.getBool('isGridMode') ?? true;
     });
@@ -63,26 +62,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkStreak() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final int streak = prefs.getInt('streak') ?? 0;
     final String? lastCompletionStr = prefs.getString('last_completion_date');
 
     if (lastCompletionStr != null) {
       try {
         final lastCompletionRaw = DateTime.parse(lastCompletionStr);
-        // Normalize to midnight for fair comparison
         final lastCompletion = DateTime(lastCompletionRaw.year, lastCompletionRaw.month, lastCompletionRaw.day);
         final now = DateTime.now();
         final today = DateTime(now.year, now.month, now.day);
         final yesterday = today.subtract(const Duration(days: 1));
 
         if (lastCompletion.isBefore(yesterday)) {
-        setState(() => _streak = 0);
-        await prefs.setInt('streak', 0);
-      } else {
-        setState(() => _streak = streak);
+          setState(() => _streak = 0);
+          await prefs.setInt('streak', 0);
+        } else {
+          setState(() => _streak = streak);
         }
       } catch (e) {
         debugPrint('Error parsing last completion date: $e');
+        if (!mounted) return;
         setState(() => _streak = 0);
         await prefs.remove('last_completion_date');
       }
@@ -91,70 +91,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _updateStreak() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? lastCompletionStr = prefs.getString('last_completion_date');
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    if (lastCompletionStr != null) {
-      try {
-        final lastCompletionRaw = DateTime.parse(lastCompletionStr);
-        final lastCompletion = DateTime(lastCompletionRaw.year, lastCompletionRaw.month, lastCompletionRaw.day);
-        if (lastCompletion.isAtSameMomentAs(today)) {
-          return;
-        }
-      } catch (e) {
-        debugPrint('Error parsing last completion date in update: $e');
-      }
-    }
-
-    setState(() {
-      _streak++;
-    });
-    HapticFeedback.lightImpact();
-    await prefs.setInt('streak', _streak);
-    await prefs.setString('last_completion_date', today.toIso8601String());
-    await WidgetService.updateStreak(_streak);
-
-    final String? historyString = prefs.getString('history_log');
-    Map<String, dynamic> history = {};
-    if (historyString != null) {
-      history = jsonDecode(historyString);
-    }
-    history[today.toIso8601String()] = 100;
-    await prefs.setString('history_log', jsonEncode(history));
-  }
-
   Future<void> _loadNotes() async {
     final prefs = await SharedPreferences.getInstance();
     final String? notesString = prefs.getString('notes');
     if (notesString != null) {
       try {
+        if (!mounted) return;
         setState(() {
           _notes = List<Map<String, dynamic>>.from(jsonDecode(notesString));
           _sortNotes();
         });
-
-        bool anyCompleted = false;
-        for (var note in _notes) {
-          final items = note['items'];
-          if (items != null && items is List && items.isNotEmpty) {
-            final progress = _calculateProgress(items);
-            if (progress == 1.0) {
-              anyCompleted = true;
-              break;
-            }
-          }
-        }
-
-        if (anyCompleted) {
-          _updateStreak();
-        }
       } catch (e) {
         debugPrint('Error loading notes: $e');
       }
     }
+    if (mounted) await _checkStreak();
   }
 
   Future<void> _addNote() async {
@@ -169,12 +120,12 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       _sortNotes();
     });
-    _saveNotes();
+    await _saveNotes();
   }
 
   Future<void> _saveNotes() async {
     final prefs = await SharedPreferences.getInstance();
-    prefs.setString('notes', jsonEncode(_notes));
+    await prefs.setString('notes', jsonEncode(_notes));
   }
 
   Future<void> _deleteNote(Map<String, dynamic> note,
@@ -208,7 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _notes.removeWhere((n) => n['id'] == note['id']);
       });
-      _saveNotes();
+      await _saveNotes();
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -221,7 +172,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 _notes.add(note);
                 _sortNotes();
               });
-              _saveNotes();
+              _saveNotes(); // fire-and-forget intentional in sync callback
+              final items = note['items'];
+              if (items != null && items is List) {
+                for (var item in items) {
+                  if (item['notifyTime'] != null) {
+                    try {
+                      final parts = (item['notifyTime'] as String).split(':');
+                      if (parts.length == 2) {
+                        NotificationService().scheduleDailyNotification(
+                          item['id'],
+                          item['text'] ?? 'Task',
+                          TimeOfDay(
+                            hour: int.parse(parts[0]),
+                            minute: int.parse(parts[1]),
+                          ),
+                        );
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
             },
           ),
         ),
@@ -420,33 +391,33 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Pick a Category'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: _categories.map((category) {
-            return ListTile(
-              title: Text(category),
-              leading: Radio<String>(
-                value: category,
-                groupValue: note['category'] ?? 'All',
-                onChanged: (String? value) {
-                  if (value != null) {
-                    setState(() {
-                      note['category'] = value;
-                    });
-                    _saveNotes();
-                    Navigator.pop(context);
-                  }
+        content: RadioGroup<String>(
+          groupValue: note['category'] ?? 'All',
+          onChanged: (String? value) {
+            if (value != null) {
+              setState(() {
+                note['category'] = value;
+              });
+              _saveNotes();
+              Navigator.pop(context);
+            }
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: _categories.map((category) {
+              return ListTile(
+                title: Text(category),
+                leading: Radio<String>(value: category),
+                onTap: () {
+                  setState(() {
+                    note['category'] = category;
+                  });
+                  _saveNotes();
+                  Navigator.pop(context);
                 },
-              ),
-              onTap: () {
-                setState(() {
-                  note['category'] = category;
-                });
-                _saveNotes();
-                Navigator.pop(context);
-              },
-            );
-          }).toList(),
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
@@ -569,7 +540,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadCategories() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('categories');
-    if (saved != null) {
+    if (saved != null && mounted) {
       setState(() {
         _categories = saved;
       });
@@ -739,13 +710,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Simple case: just replace the entire list
                 _notes = reorderedVisibleNotes;
               } else {
-                // Complex case: maintain the order of visible notes while preserving other notes
-                // Build a map for quick lookup of new positions
-                Map<int, int> idToNewIndex = {};
-                for (int i = 0; i < reorderedVisibleNotes.length; i++) {
-                  idToNewIndex[reorderedVisibleNotes[i]['id']] = i;
-                }
-                
+                // Complex case: slot reordered visible notes back into the full list,
+                // preserving positions of notes from other categories.
                 // Separate notes into current category and others
                 List<Map<String, dynamic>> otherNotes = [];
                 List<int> otherIndices = [];
@@ -842,7 +808,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   noteId: note['id'],
                                   initialTitle: note['title'],
                                   initialItems: List<Map<String, dynamic>>.from(
-                                      note['items']),
+                                      note['items'] ?? []),
                                 ),
                               ),
                             ).then((_) => _loadNotes());
@@ -993,7 +959,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context) => ChecklistScreen(
                   noteId: note['id'],
                   initialTitle: note['title'],
-                  initialItems: List<Map<String, dynamic>>.from(note['items']),
+                  initialItems: List<Map<String, dynamic>>.from(note['items'] ?? []),
                 ),
               ),
             );
